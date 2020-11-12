@@ -21,8 +21,13 @@ if (config.port) {
   api.listen(config.port);
 }
 
+// https://github.com/discordjs/discord.js/pull/4020
+const broadcastEval = fn => manager.broadcastEval(
+  `(${fn})(this)`
+);
+
 async function updateBotInfo() {
-  const newBotInfo = await manager.broadcastEval(client => ({
+  const newBotInfo = await broadcastEval(client => ({
     status: client.ws.status,
     guilds: client.guilds.cache.size,
     cachedUsers: client.users.size,
