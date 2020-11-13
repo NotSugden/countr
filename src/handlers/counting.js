@@ -31,7 +31,10 @@ module.exports = async (message, gdb) => {
         if (timeoutrole.duration) gdb.setOnObject("timeouts", message.author.id, Date.now() + timeoutrole.duration * 1000);
         try {
           await message.member.roles.add(timeoutrole.role);
-          if (timeoutrole.duration) setTimeout(() => message.member.roles.remove(timeoutrole.role), timeoutrole.duration * 1000);
+          if (timeoutrole.duration) setTimeout(() => {
+            message.member.roles.remove(timeoutrole.role);
+            gdb.removeFromObject("timeouts", message.author.id);
+          }, timeoutrole.duration * 1000);
         } catch(e) { /* something went wrong */ }
       }
     }
@@ -58,14 +61,23 @@ module.exports = async (message, gdb) => {
     countingMessage = await message.channel.send(`${message.author}: ${message.content}`);
     deleteMessage(message);
   } catch(e) { /* something went wrong */ }
+  else if (modules.includes("embed")) try {
+    countingMessage = await message.channel.send({
+      embed: {
+        description: `${message.author}: ${message.content}`,
+        color: message.member.displayColor || 3553598
+      }
+    });
+    deleteMessage(message);
+  } catch(e) { /* something went wrong */ }
 
   gdb.set("message", countingMessage.id);
 
   for (const notifID in notifications) {
     const notif = notifications[notifID];
     if (notif && (
-      notif.mode == "only" && notif.count == count ||
-      notif.mode == "each" && notif.count % count == 0
+      notif.mode == "only" && count == notif.count ||
+      notif.mode == "each" && count % notif.count == 0
     )) {
       try {
         const receiver = await message.guild.members.fetch(notif.user);
@@ -101,16 +113,17 @@ module.exports = async (message, gdb) => {
       score: scores[message.author.id] || 0,
       message
     }, flowIDs = Object.keys(flows).slice(0, limitFlows);
-  for (const flowID of flowIDs) {
+  for (const flowID of flowIDs) try {
     const flow = flows[flowID]; let success;
     for (const trigger of flow.triggers.slice(0, limitTriggers).filter(t => t)) {
       success = await allTriggers[trigger.type].check(countData, trigger.data);
       if (success) break;
     }
     if (success)
-      for (const action of flow.actions.slice(0, limitActions).filter(a => a))
+      for (const action of flow.actions.slice(0, limitActions).filter(a => a)) try {
         await allActions[action.type].run(countData, action.data);
-  }
+      } catch(e) { /* something went wrong */ }
+  } catch(e) { /* something went wrong */ }
 };
 
 const bulks = new Map(), timestamps = new Map();
@@ -135,4 +148,4 @@ async function deleteMessage(message, skipImmediateDeletion = false) {
   }
 }
 
-module.exports.deleteCommand = messages => Promise.all(messages.map(m => deleteMessage(m, true)));
+module.exports.deleteCommand = messages => Promise.all(messages.map(m => deleteMessage(m, messages.length > 1 ? true : false)));

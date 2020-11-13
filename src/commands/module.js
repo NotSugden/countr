@@ -24,7 +24,7 @@ const { modules, generateTip } = require("../constants/index.js"), config = requ
 
 module.exports.run = async (message, [ moduleName, state ], gdb, { prefix }) => {
   const { modules: enabledModules } = gdb.get();
-  if (!moduleName) return message.channel.send(generateTip(prefix), {
+  if (!moduleName) return message.channel.send({
     embed: {
       title: "📋 Available modules",
       description: [
@@ -40,14 +40,16 @@ module.exports.run = async (message, [ moduleName, state ], gdb, { prefix }) => 
         text: `Requested by ${message.author.tag}`
       }
     }
-  });
+  })
+    .then(m => m.edit(generateTip(prefix)))
+    .catch(() => message.channel.send("🆘 An unknown error occurred. Do I have permission? (Embed Links)"));
 
   if (!modules[moduleName]) return message.channel.send("❌ No module exists with this name.");
 
-  if (!state) return message.channel.send(generateTip(prefix), {
+  if (!state) return message.channel.send({
     embed: {
       title: `${enabledModules.includes(moduleName) ? "🔘" : "⚫"} Module \`${moduleName}\``,
-      description: modules[moduleName].long || modules[moduleName].short,
+      description: (modules[moduleName].long || modules[moduleName].short) + (modules[moduleName].incompatible.length ? `\n**Incompatible with:** ${modules[moduleName].incompatible.map(mName => `\`${mName}\``).join(", ")}.` : ""),
       color: config.color,
       timestamp: Date.now(),
       footer: {
@@ -58,8 +60,16 @@ module.exports.run = async (message, [ moduleName, state ], gdb, { prefix }) => 
         url: modules[moduleName].image
       }
     }
-  }); else {
+  })
+    .then(m => m.edit(generateTip(prefix)))
+    .catch(() => message.channel.send("🆘 An unknown error occurred. Do I have permission? (Embed Links)"));
+  else {
     if (state == "on") {
+      let incompatibleModules = enabledModules.filter(mName => modules[mName].incompatible ? modules[mName].incompatible.includes(moduleName) : false);
+      if (incompatibleModules.length) {
+        if (incompatibleModules.length == 1) return message.channel.send(`❌ This module is incompatible with the module \`${incompatibleModules[0]}\`.`);
+        else return message.channel.send(`❌ This module is incompatible with the modules ${incompatibleModules.map(mName => `\`${mName}\``).join(", ")}.`);
+      }
       gdb.addToArray("modules", moduleName);
       return message.channel.send(`✅ Module \`${moduleName}\` has been enabled.`);
     } else {

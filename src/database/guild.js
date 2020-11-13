@@ -1,4 +1,4 @@
-const config = require("../../config.json"), mongoose = require("mongoose"), global = require("./global.js"), { getDateFormatted } = require("../constants/time.js");
+const mongoose = require("mongoose"), global = require("./global.js"), { getDateFormatted } = require("../constants/time.js");
 
 const dbCache = new Map(), dbSaveQueue = new Map();
 
@@ -20,30 +20,36 @@ const guildObject = {
   log: {} // the guild's confirmed counts the last week, ex { "YYYY-MM-DD": 1234 }
 };
 
-const guildSchema = mongoose.Schema(Object.assign({}, guildObject), { minimize: true }); // make a copy of guildObject
+const guildSchema = mongoose.Schema(JSON.parse(JSON.stringify(guildObject)), { minimize: true }); // make a copy of guildObject
 const Guild = mongoose.model("Guild", guildSchema);
 
 const get = (guildid) => new Promise((resolve, reject) => Guild.findOne({ guildid }, (err, guild) => {
   if (err) return reject(err);
   if (!guild) {
-    guild = new Guild(Object.assign({}, guildObject));
+    guild = new Guild(JSON.parse(JSON.stringify(guildObject)));
     guild.guildid = guildid;
   }
   return resolve(guild);
 }));
 
 const load = async (guildid) => {
-  let guild = await get(guildid), guildCache = {};
-  for (const key in guildObject) guildCache[key] = guild[key] || guildObject[key]; // if there's no value stored in the guild database then we use the default value
+  let guild = await get(guildid), guildCache = {}, freshGuildObject = JSON.parse(JSON.stringify(guildObject)); // make a fresh one, to not make duplicates across guilds (for example on arrays and objects)
+  for (const key in freshGuildObject) guildCache[key] = guild[key] || freshGuildObject[key]; // if there's no value stored in the guild database then we use the default value
   return dbCache.set(guildid, guildCache);
 };
 
 const save = async (guildid, changes) => {
   if (!dbSaveQueue.has(guildid)) {
     dbSaveQueue.set(guildid, changes);
-    let guild = await get(guildid), guildCache = dbCache.get(guildid), guildSaveQueue = dbSaveQueue.get(guildid);
+    let guild = await get(guildid), guildCache = dbCache.get(guildid), guildSaveQueue = JSON.parse(JSON.stringify(dbSaveQueue.get(guildid)));
     for (const key of guildSaveQueue) guild[key] = guildCache[key];
-    return guild.save().then(() => dbSaveQueue.delete(guildid)).catch(console.log);
+    return guild.save().then(() => {
+      let newSaveQueue = dbSaveQueue.get(guildid);
+      if (newSaveQueue.length > guildSaveQueue.length) {
+        dbSaveQueue.delete(guildid);
+        save(guildid, newSaveQueue.filter(key => !guildSaveQueue.includes(key)));
+      } else dbSaveQueue.delete(guildid);
+    }).catch(console.log);
   } else dbSaveQueue.get(guildid).push(...changes);
 };
 
@@ -123,58 +129,6 @@ module.exports = (client) => (async guildid => {
       } catch(e) { /* something went wrong */ }
 
       global.addCount();
-    },
-    afterCount: async (count, member, message) => {
-      let guildCache = dbCache.get(guildid), guild = client.guilds.resolve(guildid);
-      guildCache.message = message.id;
-
-      let countMessage = message;
-
-      // checking pintriggers
-      let pin = Object.values(guildCache.pins).find(pin => (
-        pin.mode == "only" && pin.count == count ||
-        pin.mode == "each" && pin.count % count == 0
-      ));
-      if (pin) try {
-        let pinned = await message.channel.fetchPinnedMessages().catch(() => ({ size: 0 }));
-        if (pinned.size == 50) await pinned.last().unpin().catch();
-
-        if (message.author.bot) message.pin(); // already reposted
-        else if (pin.action == "repost") {
-          countMessage = await message.channel.send(/*todo*/);
-          if (guildCache.message == message.id) guildCache.message = countMessage.id;
-          countMessage.pin();
-          message.delete();
-        } else message.pin();
-      } catch(e) { /* something went wrong */ }
-
-      // checking notifications
-      for (const nid in guildCache.notifications) {
-        const notification = guildCache.notifications[nid];
-        if (notification && (
-          notification.mode == "only" && notification.count == count ||
-          notification.mode == "each" && notification.count % count == 0
-        )) {
-          try {
-            let notifier = await guild.members.fetch(notification.user);
-            if (notifier) notifier.send({
-              embed: {
-                description: `🎉 ${guild} reached ${count} total counts!\nThe user who sent it was ${member}.\n\n[**→ Click here to jump to the message!**](${countMessage.url})`,
-                color: config.color,
-                thumbnail: {
-                  url: member.user.displayAvatarURL({ dynamic: true, size: 512 })
-                },
-                footer: {
-                  text: `Notification ID ${nid}`
-                }
-              }
-            }).catch();
-          } catch(e) { /* something went wrong */ }
-          if (notification.mode == "only") delete guildObject.notifications[nid];
-        }
-      }
-
-      save(guildid, ["message", "notifications"]);
     }
   };
 });
